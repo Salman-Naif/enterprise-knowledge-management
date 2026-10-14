@@ -22,12 +22,12 @@ services:
         value: qwen/qwen3-embedding-8b
       - key: EMBEDDING_DIMENSION
         value: "4096"
-      - key: ADMIN_USERNAME
-        value: admin
       - key: ADMIN_EMAIL
         value: admin@example.com
       - key: ADMIN_PASSWORD
         sync: false  # Set this manually in Render dashboard
+      - key: CHROMADB_API_KEY
+        sync: false  # Key that external RAG clients send to /search
       - key: FLASK_ENV
         value: production
     disk:
