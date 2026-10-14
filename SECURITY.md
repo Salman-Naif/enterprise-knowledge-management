@@ -22,7 +22,7 @@ If you discover a security vulnerability, please:
 
 When deploying this server:
 
-1. **Change default credentials** - Never use default admin password in production
+1. **Set ADMIN_PASSWORD** - There is no default password; if it is unset, a one-time random password is printed to the server log on first run. Change it after logging in
 2. **Use HTTPS** - Always deploy behind HTTPS (Render.com provides this automatically)
 3. **Set strong SECRET_KEY** - Generate a random key for production
 4. **Limit access** - Use firewall rules to restrict access if needed
@@ -36,6 +36,7 @@ Never commit these to version control:
 - `OPENROUTER_API_KEY`
 - `GEMINI_API_KEY`
 - `ADMIN_PASSWORD`
+- `CHROMADB_API_KEY`
 - `DATABASE_URL`
 
 Use `.env` file locally and environment variables in production.

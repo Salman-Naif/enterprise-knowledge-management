@@ -1,15 +1,15 @@
 <div align="center">
 
-# 🗄️ ChromaDB Knowledge Server
+# 🗄️ Enterprise Knowledge Management System
 
-### Production-Ready Vector Database Server for RAG Applications
+### A ChromaDB knowledge server for RAG applications, with a bilingual (Arabic/English) admin dashboard
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
-[![Flask](https://img.shields.io/badge/Flask-2.x-green.svg)](https://flask.palletsprojects.com)
-[![ChromaDB](https://img.shields.io/badge/ChromaDB-Latest-orange.svg)](https://www.trychroma.com)
+[![Flask](https://img.shields.io/badge/Flask-3.0-green.svg)](https://flask.palletsprojects.com)
+[![ChromaDB](https://img.shields.io/badge/ChromaDB-0.5-orange.svg)](https://www.trychroma.com)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[Features](#-features) • [Quick Start](#-quick-start) • [API Reference](#-api-reference) • [Deployment](#-deployment) • [Contributing](#-contributing)
+[Features](#-features) • [Quick Start](#-quick-start) • [API](#-api-reference) • [Deployment](#%EF%B8%8F-deployment) • [Testing](#-testing)
 
 </div>
 
@@ -17,103 +17,80 @@
 
 ## 📖 Overview
 
-ChromaDB Knowledge Server is a **production-ready REST API** for vector-based document storage and semantic search. It provides everything you need to build RAG (Retrieval-Augmented Generation) applications:
+Organizations keep their knowledge in scattered PDFs, Word files and Google Docs. This project turns those
+documents into a searchable vector knowledge base that a chatbot or any RAG (Retrieval-Augmented Generation)
+application can query over a simple REST API.
 
-- 📄 **Document Processing** - Upload PDF, DOCX, TXT files with automatic text extraction
-- 🔍 **Semantic Search** - Find relevant content using AI-powered similarity search
-- 🔐 **Authentication** - Role-based access control with secure sessions
-- 📊 **Dashboard** - Modern web interface for management and monitoring
-- 🌍 **Multilingual** - Full Arabic and English support
+Staff upload documents through a web dashboard; the server extracts the text, splits it into chunks, generates
+embeddings and stores them in ChromaDB. External applications then call `POST /search` with an API key to retrieve
+the most relevant passages for a question.
+
+```
+Upload → Extract text → Chunk → Generate embeddings (OpenRouter) → Store in ChromaDB → Semantic search API
+```
 
 ---
 
 ## ✨ Features
 
-### Document Processing Pipeline
-```
-Upload → Extract Text → Chunk → Generate Embeddings → Store in ChromaDB
-```
+### Document processing
+| Source | What is extracted |
+|--------|-------------------|
+| **PDF** | Text layer (scanned PDFs without a text layer are not supported) |
+| **DOCX** | Paragraphs and tables |
+| **TXT** | Plain text, with UTF-8 / Windows-1256 encoding detection for Arabic files |
+| **Google Docs** | Imported directly from a shared document link |
 
-| Format | Features |
-|--------|----------|
-| **PDF** | Text extraction, tables, Arabic OCR |
-| **DOCX** | Full text and table support |
-| **TXT** | Direct ingestion, encoding detection |
+Each document's language is detected (Arabic, English or mixed) and stored with its metadata.
 
-### Security & Access Control
-- 🔑 Session-based authentication
-- 👥 Three roles: Admin, Manager, Viewer
-- 🛡️ Rate limiting protection
-- 🔒 Password hashing with Werkzeug
+### Access control
+- Session-based login with Werkzeug password hashing (Flask-Login)
+- Three roles:
+  | Role | Can do |
+  |------|--------|
+  | **Staff** | Upload documents, browse files |
+  | **Admin** | + delete files, view system status, health and analytics |
+  | **System Manager** | + manage user accounts |
+- Separate API-key authentication for external clients (`/search`, `/api/stats`)
+- Rate limiting (Flask-Limiter), including a stricter limit on login attempts
 
-### Web Dashboard
-- 📈 Real-time statistics
-- 📁 File management
-- ⬆️ Drag-and-drop upload
-- 💚 Health monitoring
-- 👤 User management
+### Web dashboard (Arabic UI)
+- Statistics, file manager and drag-and-drop upload
+- Service health and diagnostics (ChromaDB + embeddings provider)
+- Query and activity logs, user management
 
-### API Capabilities
-- RESTful design with JSON responses
-- 15+ endpoints for full functionality
-- Comprehensive error handling
-- CORS support for frontend integration
+### Built for small servers
+Runs on a 512 MB instance (e.g. Render's free tier): chunk count per document is capped, memory is
+garbage-collected after each upload, and gunicorn workers are recycled.
 
 ---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-- Python 3.11+
-- pip
-
-### Installation
-
 ```bash
-# Clone the repository
 git clone https://github.com/Salman-Naif/chromadb-server-public.git
 cd chromadb-server-public
 
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
+source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# Set environment variables
-cp .env.example .env
-# Edit .env with your settings
+cp .env.example .env              # then fill in the values below
+python app.py                     # http://localhost:8000
 ```
 
-### Configuration
-
-Create a `.env` file:
+Minimum `.env`:
 
 ```env
-# Required
-SECRET_KEY=your-secret-key-here
-OPENROUTER_API_KEY=sk-or-v1-xxxxx
-
-# Optional
-FLASK_ENV=production
-CHROMADB_PATH=./data/chromadb
-ADMIN_PASSWORD=your-admin-password
+SECRET_KEY=<random string>          # python -c "import secrets; print(secrets.token_hex(32))"
+OPENROUTER_API_KEY=sk-or-v1-...     # used to generate embeddings
+ADMIN_EMAIL=you@example.com         # first System Manager account
+ADMIN_PASSWORD=<strong password>
+CHROMADB_API_KEY=<random string>    # key external apps send to /search
 ```
 
-### Run the Server
-
-```bash
-# Development
-flask run --debug
-
-# Production
-gunicorn app:app --bind 0.0.0.0:5000 --workers 1 --timeout 300
-```
-
-Visit `http://localhost:5000` and login with:
-- **Username**: `admin`
-- **Password**: (set in .env or default: `admin123`)
+Log in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`. There is **no default password**: if `ADMIN_PASSWORD` is empty on
+first run, a random one-time password is printed to the server log.
 
 ---
 
@@ -121,237 +98,129 @@ Visit `http://localhost:5000` and login with:
 
 ### Authentication
 
-All API endpoints require authentication via session cookie.
+| Endpoints | Auth |
+|-----------|------|
+| `POST /search`, `GET /api/stats` | API key: `Authorization: Bearer <CHROMADB_API_KEY>` or `X-API-Key: <key>` |
+| Dashboard and `/api/upload`, `/api/file/...`, `/api/user/...` | Logged-in session (role-based) |
+| `GET /api/health-check`, `GET /wake-up` | Public |
 
-### Endpoints
+If `CHROMADB_API_KEY` is not set on the server, API-key endpoints return `503` (API access disabled).
 
-#### Upload Document
-```http
-POST /api/upload
-Content-Type: multipart/form-data
+### Semantic search
 
-file: <document file>
+```bash
+curl -X POST https://<your-server>/search \
+  -H "Authorization: Bearer $CHROMADB_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What are the graduation requirements?", "top_k": 5}'
 ```
 
-**Response:**
 ```json
 {
   "success": true,
-  "file_id": "abc123",
-  "filename": "document.pdf",
-  "chunks_count": 15,
-  "message": "File uploaded successfully"
+  "results": {
+    "documents": ["Graduation requires completion of 132 credit hours..."],
+    "metadatas": [{"source": "academic_guide.pdf", "file_id": "…", "chunk_index": 12, "lang": "en"}],
+    "distances": [0.21]
+  },
+  "query_time_ms": 38.4
 }
 ```
 
-#### Semantic Search
-```http
-POST /api/search
-Content-Type: application/json
+`top_k` is optional (default 5, max 10). Lower distance means a closer match.
 
-{
-  "query": "What are the graduation requirements?",
-  "top_k": 5
-}
-```
+### Main endpoints
 
-**Response:**
-```json
-{
-  "success": true,
-  "results": [
-    {
-      "text": "Graduation requires completion of 132 credit hours...",
-      "score": 0.89,
-      "metadata": {
-        "source": "academic_guide.pdf",
-        "chunk_index": 12
-      }
-    }
-  ]
-}
-```
+| Method | Path | Description | Access |
+|--------|------|-------------|--------|
+| `POST` | `/search` | Semantic search over the knowledge base | API key |
+| `GET` | `/api/stats` | Chunk, file and query counts | API key |
+| `POST` | `/api/upload` | Upload a PDF / DOCX / TXT file (multipart `file`) | Session |
+| `POST` | `/api/upload/google-docs` | Import a Google Doc (`{"url": "..."}`) | Session |
+| `GET` | `/api/file/<file_id>` | File metadata | Session |
+| `DELETE` | `/api/file/<file_id>` | Delete a file and its vectors | Admin |
+| `POST` | `/api/user/<id>/toggle-status` | Enable / disable a user | System Manager |
+| `DELETE` | `/api/user/<id>/delete` | Delete a user | System Manager |
+| `GET` | `/api/diagnose` | Full service diagnosis | Admin |
+| `GET` | `/api/health-check` | ChromaDB + embeddings status | Public |
 
-#### List Documents
-```http
-GET /api/documents
-```
-
-#### Delete Document
-```http
-DELETE /api/documents/{file_id}
-```
-
-#### System Health
-```http
-GET /api/health
-```
-
-#### System Statistics
-```http
-GET /api/stats
-```
+The dashboard pages (`/dashboard`, `/upload`, `/files`, `/status`, `/health`, `/analysis`, `/users`, `/profile`)
+make up the rest of the 26 routes.
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                   ChromaDB Knowledge Server                  │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │   Flask      │  │   ChromaDB   │  │   SQLite     │      │
-│  │   REST API   │  │   Vectors    │  │   Users/Logs │      │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
-│         │                 │                 │               │
-│  ┌──────┴─────────────────┴─────────────────┴──────┐       │
-│  │              Core Services                       │       │
-│  │                                                  │       │
-│  │  • DocumentProcessor  - Text extraction          │       │
-│  │  • EmbeddingsManager  - Vector generation        │       │
-│  │  • ChromaDBManager    - Storage & search         │       │
-│  │  • AuthManager        - User authentication      │       │
-│  └──────────────────────────────────────────────────┘       │
-│                           │                                  │
-├───────────────────────────┼──────────────────────────────────┤
-│  External Services:       ▼                                  │
-│  ┌──────────────────────────────┐                           │
-│  │  OpenRouter API (Embeddings) │                           │
-│  └──────────────────────────────┘                           │
-└─────────────────────────────────────────────────────────────┘
+            ┌───────────────────────────────┐
+ Browser ──►│  Flask app (Jinja2 dashboard) │◄── RAG client / chatbot
+ (session)  │  Flask-Login · Flask-Limiter  │    (API key → POST /search)
+            └──────┬───────────────┬────────┘
+                   │               │
+          ┌────────▼─────┐   ┌─────▼─────────────┐      ┌──────────────────────┐
+          │  ChromaDB    │   │ SQLite / Postgres │      │ OpenRouter embeddings│
+          │  (vectors)   │   │ users, files, logs│      │ qwen3-embedding-8b   │
+          └──────────────┘   └───────────────────┘      └──────────────────────┘
 ```
+
+- **ChromaDB** stores the chunk vectors and their metadata.
+- **SQLAlchemy** (SQLite locally, PostgreSQL via `DATABASE_URL`) stores users, file metadata and logs.
+- **OpenRouter** generates the embeddings (`EMBEDDING_MODEL`, default `qwen/qwen3-embedding-8b`).
 
 ---
 
 ## ☁️ Deployment
 
-### Render.com (Recommended)
-
-1. Fork this repository
-2. Create new Web Service on Render
-3. Connect your GitHub repo
-4. Set environment variables:
-   - `SECRET_KEY`
-   - `OPENROUTER_API_KEY`
-5. Deploy!
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
+### Render (blueprint included)
+`render.yaml` defines the web service and a persistent disk for ChromaDB. `SECRET_KEY` is generated automatically;
+set `OPENROUTER_API_KEY`, `ADMIN_PASSWORD` and `CHROMADB_API_KEY` in the Render dashboard.
 
 ### Docker
 
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
-COPY . .
-
-EXPOSE 5000
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:5000"]
-```
-
 ```bash
-docker build -t chromadb-server .
-docker run -p 5000:5000 -e SECRET_KEY=xxx -e OPENROUTER_API_KEY=xxx chromadb-server
+cp .env.example .env    # fill in SECRET_KEY, ADMIN_PASSWORD, OPENROUTER_API_KEY, CHROMADB_API_KEY
+docker compose up -d    # http://localhost:5000
 ```
 
-### Railway
-
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new)
+Compose refuses to start without `SECRET_KEY` and `ADMIN_PASSWORD`, and data is kept in a named volume.
 
 ---
 
-## ⚙️ Configuration Options
+## ⚙️ Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SECRET_KEY` | Flask secret key | Required |
-| `OPENROUTER_API_KEY` | API key for embeddings | Required |
-| `CHROMADB_PATH` | Database storage path | `./data/chromadb` |
+| `SECRET_KEY` | Flask session key | random per process (sessions reset on restart) |
+| `OPENROUTER_API_KEY` | Embeddings provider key | — (required for upload/search) |
+| `CHROMADB_API_KEY` | Key for `/search` and `/api/stats` | — (API disabled) |
+| `ADMIN_EMAIL` | First System Manager login | `admin@example.com` |
+| `ADMIN_PASSWORD` | Its password | — (random, printed once) |
+| `DATABASE_URL` | PostgreSQL URL | local SQLite |
+| `CHROMADB_PATH` | Vector store path | `./data/chromadb` |
 | `CHROMADB_COLLECTION` | Collection name | `knowledge_base` |
-| `EMBEDDING_MODEL` | Model for embeddings | `qwen/qwen3-embedding-8b` |
-| `EMBEDDING_DIMENSION` | Vector dimensions | `4096` |
-| `MAX_CONTENT_LENGTH` | Max upload size | `52428800` (50MB) |
-| `ADMIN_USERNAME` | Default admin user | `admin` |
-| `ADMIN_PASSWORD` | Default admin password | `admin123` |
+| `EMBEDDING_MODEL` | OpenRouter embedding model | `qwen/qwen3-embedding-8b` |
+| `EMBEDDING_DIMENSION` | Vector size | `4096` |
+
+Uploads are limited to 50 MB.
 
 ---
 
-## 📊 Performance
-
-| Metric | Value |
-|--------|-------|
-| Search Latency | < 500ms |
-| Max Document Size | 50MB |
-| Max Pages per Document | 50+ |
-| Minimum RAM | 512MB |
-| Concurrent Users | 100+ |
-
-### Memory Optimization
-
-The server is optimized for constrained environments:
-- Automatic chunk limiting (max 15 per document)
-- Garbage collection after processing
-- Worker recycling to prevent memory leaks
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-### Development Setup
+## 🧪 Testing
 
 ```bash
-# Install dev dependencies
 pip install -r requirements-dev.txt
-
-# Run tests
-pytest
-
-# Run linter
-flake8 app.py
+pytest -q
 ```
+
+The test suite covers authentication and security behaviour (no default credentials, open-redirect protection,
+API-key checks) and runs without network access.
 
 ---
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- [ChromaDB](https://www.trychroma.com/) - Vector database
-- [OpenRouter](https://openrouter.ai/) - AI API gateway
-- [Flask](https://flask.palletsprojects.com/) - Web framework
-- [pdfplumber](https://github.com/jsvine/pdfplumber) - PDF extraction
-
----
+MIT — see [LICENSE](LICENSE).
 
 ## 📧 Contact
 
-**SALMAN NAIF ALMUHAYSIN** - [ Find me on X : @Snma7_ ](https://x.com/snma7_?s=21) 
-- Or Mail me on : Snma2003@outlook.sa
-
-Project Link: [https://github.com/Salman-Naif/chromadb-server-public.git]
----
-
-<div align="center">
-
-**⭐ Star this repo if you find it useful!**
-
-Made with ❤️ for the open source community
-
-</div>
+**Salman Naif Almuhaysin** — [X: @Snma7_](https://x.com/snma7_) · Snma2003@outlook.sa

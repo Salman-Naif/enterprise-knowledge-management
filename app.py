@@ -19,6 +19,8 @@ Version: 1.0.0
 import os
 import sys
 import gc
+import hmac
+import secrets
 import uuid
 import platform
 import socket
@@ -46,7 +48,14 @@ app = Flask(__name__)
 # Configuration
 # ============================================
 
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'change-this-secret-key-in-production')
+# No hardcoded fallback: if SECRET_KEY is not set, a random key is generated for
+# this process only (sessions are reset on restart). Always set it in production.
+_secret_key = os.environ.get('SECRET_KEY', '').strip()
+if not _secret_key:
+    _secret_key = secrets.token_hex(32)
+    print("⚠️ SECRET_KEY is not set - using a random key for this process. "
+          "Set SECRET_KEY in the environment to keep sessions across restarts.")
+app.config['SECRET_KEY'] = _secret_key
 
 # Database Configuration
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
@@ -76,9 +85,14 @@ app.config['EMBEDDING_DIMENSION'] = int(os.environ.get('EMBEDDING_DIMENSION', '4
 app.config['GEMINI_API_KEY'] = os.environ.get('GEMINI_API_KEY', '')
 
 # Admin Configuration
-app.config['ADMIN_USERNAME'] = os.environ.get('ADMIN_USERNAME', 'admin')
-app.config['ADMIN_EMAIL'] = os.environ.get('ADMIN_EMAIL', 'admin@example.com')
-app.config['ADMIN_PASSWORD'] = os.environ.get('ADMIN_PASSWORD', 'admin123')
+# The first system manager account is created on first run from these values.
+# There is no default password: if ADMIN_PASSWORD is not set, a random one is
+# generated and printed once to the server log.
+app.config['ADMIN_EMAIL'] = os.environ.get('ADMIN_EMAIL', 'admin@example.com').strip().lower()
+app.config['ADMIN_PASSWORD'] = os.environ.get('ADMIN_PASSWORD', '')
+
+# API key for external clients of the /search and /api/stats endpoints
+app.config['CHROMADB_API_KEY'] = os.environ.get('CHROMADB_API_KEY', '').strip()
 
 # Flask/System info
 app.config['FLASK_VERSION'] = '3.0.3'
@@ -312,26 +326,28 @@ def api_key_required(f):
         if not api_key:
             api_key = request.headers.get('X-API-Key', '')
         
-        # 3. Query parameter
-        if not api_key:
-            api_key = request.args.get('api_key', '')
-        
-        # 4. JSON body
+        # 3. JSON body (query-string keys are not accepted: they end up in access logs)
         if not api_key:
             data = request.get_json(silent=True) or {}
-            api_key = data.get('api_key', '')
-        
+            api_key = data.get('api_key', '') if isinstance(data, dict) else ''
+
         # Validate
         valid_key = app.config.get('CHROMADB_API_KEY', '')
-        
+
+        if not valid_key:
+            return jsonify({
+                'success': False,
+                'error': 'API access is disabled: CHROMADB_API_KEY is not configured on the server'
+            }), 503
+
         if not api_key:
             return jsonify({
-                'success': False, 
+                'success': False,
                 'error': 'API key required',
-                'hint': 'Provide via Authorization header (Bearer token), X-API-Key header, or api_key parameter'
+                'hint': 'Provide via Authorization header (Bearer token), X-API-Key header, or api_key in the JSON body'
             }), 401
-        
-        if api_key != valid_key:
+
+        if not hmac.compare_digest(str(api_key).encode(), valid_key.encode()):
             return jsonify({'success': False, 'error': 'Invalid API key'}), 401
         
         return f(*args, **kwargs)
@@ -832,7 +848,15 @@ def get_uptime():
 # Routes - Authentication
 # ============================================
 
+def _safe_next_url(target):
+    """Only allow redirects to local paths (prevents open redirects via ?next=)."""
+    if not target or not target.startswith('/') or target.startswith('//') or '\\' in target:
+        return None
+    return target
+
+
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("10 per minute", methods=['POST'])
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('dashboard'))
@@ -854,7 +878,7 @@ def login():
             db.session.commit()
             create_activity_log(user.id, 'login', 'تسجيل دخول')
             
-            next_page = request.args.get('next')
+            next_page = _safe_next_url(request.args.get('next'))
             return redirect(next_page or url_for('dashboard'))
         
         flash('بيانات الدخول غير صحيحة', 'error')
@@ -1209,9 +1233,12 @@ def api_delete_file(file_id):
 @api_key_required
 def api_search():
     try:
-        data = request.get_json()
-        query_text = data.get('query', '').strip()
-        top_k = min(data.get('topK', 5), 10)
+        data = request.get_json(silent=True) or {}
+        query_text = str(data.get('query', '')).strip()
+        try:
+            top_k = max(1, min(int(data.get('top_k', data.get('topK', 5))), 10))
+        except (TypeError, ValueError):
+            top_k = 5
         
         if not query_text:
             return jsonify({'success': False, 'error': 'لم يتم إدخال استعلام'}), 400
@@ -1685,7 +1712,8 @@ def api_diagnose():
     # Environment check
     diagnosis['environment'] = {
         'OPENROUTER_API_KEY': '✅ موجود' if app.config.get('OPENROUTER_API_KEY') else '❌ غير موجود',
-        'OPENROUTER_API_KEY_preview': app.config.get('OPENROUTER_API_KEY', '')[:20] + '...' if app.config.get('OPENROUTER_API_KEY') else 'N/A',
+        'OPENROUTER_API_KEY_preview': '...' + app.config.get('OPENROUTER_API_KEY', '')[-4:] if app.config.get('OPENROUTER_API_KEY') else 'N/A',
+        'CHROMADB_API_KEY': '✅ موجود' if app.config.get('CHROMADB_API_KEY') else '❌ غير موجود (واجهة /search معطلة)',
         'EMBEDDING_MODEL': app.config.get('EMBEDDING_MODEL', 'غير محدد'),
         'EMBEDDING_DIMENSION': app.config.get('EMBEDDING_DIMENSION', 0),
         'DATABASE_URL': '✅ موجود' if app.config.get('SQLALCHEMY_DATABASE_URI') else '❌ غير موجود'
@@ -1815,16 +1843,23 @@ def init_app():
         admin = User.query.filter_by(email=admin_email).first()
         
         if not admin:
+            admin_password = app.config['ADMIN_PASSWORD']
+            generated = not admin_password
+            if generated:
+                admin_password = secrets.token_urlsafe(12)
             admin = User(
                 email=admin_email,
                 first_name='مدير',
                 last_name='النظام',
                 role='system_manager'
             )
-            admin.set_password(app.config['ADMIN_PASSWORD'])
+            admin.set_password(admin_password)
             db.session.add(admin)
             db.session.commit()
             print(f"✅ Admin created: {admin_email}")
+            if generated:
+                print(f"🔑 ADMIN_PASSWORD was not set. Generated one-time password: {admin_password}")
+                print("   Log in and change it from the profile page, or set ADMIN_PASSWORD before first run.")
         
         init_services()
 
