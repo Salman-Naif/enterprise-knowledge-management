@@ -11,7 +11,7 @@
 If you discover a security vulnerability, please:
 
 1. **Do NOT** open a public issue
-2. Email the details to: [snma2003@outlook.sa]
+2. Email the details to: [almuhaysins@gmail.com]
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce
