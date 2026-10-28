@@ -223,4 +223,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## 📧 Contact
 
-**Salman Naif Almuhaysin** — [X: @Snma7_](https://x.com/snma7_) · Snma2003@outlook.sa
+**Salman Naif Almuhaysin** — [X: @Snma7_](https://x.com/snma7_) · almuhaysins@gmail.com
